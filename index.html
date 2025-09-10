@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Turtle Graphics</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #001122;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        canvas {
+            border: 2px solid #333;
+            background: #000011;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 250px;
+        }
+        
+        button {
+            margin: 3px;
+            padding: 8px 12px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        button:active {
+            background: #3d8b40;
+        }
+        
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        
+        .row {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas3d" width="800" height="600"></canvas>
+        
+        <div id="controls">
+            <h3 style="margin-top: 0;">3D Turtle Graphics</h3>
+            <div class="row">
+                <button onclick="turtle.forward(30)">Forward</button>
+                <button onclick="turtle.turnLeft(90)">⟲ Left</button>
+                <button onclick="turtle.turnRight(90)">⟳ Right</button>
+            </div>
+            <div class="row">
+                <button onclick="turtle.pitchUp(15)">⬆ Pitch Up</button>
+                <button onclick="turtle.pitchDown(15)">⬇ Pitch Down</button>
+                <button onclick="turtle.rollLeft(15)">↺ Roll L</button>
+                <button onclick="turtle.rollRight(15)">↻ Roll R</button>
+            </div>
+            <div class="row">
+                <button onclick="turtle.penUp()">Pen Up</button>
+                <button onclick="turtle.penDown()">Pen Down</button>
+                <button onclick="clearCanvas()">Clear</button>
+            </div>
+            <div class="row">
+                <button onclick="drawSquare()">Square</button>
+                <button onclick="drawCube()">Cube</button>
+                <button onclick="drawSpiral()">Spiral</button>
+                <button onclick="animatedDemo()">Demo</button>
+            </div>
+        </div>
+        
+        <div id="info">
+            <div>🐢 3D Turtle Graphics</div>
+            <div>Mouse: Rotate view | Scroll: Zoom</div>
+            <div>Position: <span id="position">0, 0, 0</span></div>
+            <div>Rotation: <span id="rotation">0°, 0°, 0°</span></div>
+            <div>Pen: <span id="penStatus">Down</span></div>
+        </div>
+    </div>
+
+    <script>
+        // 3D Vector Math
+        class Vector3 {
+            constructor(x = 0, y = 0, z = 0) {
+                this.x = x;
+                this.y = y;
+                this.z = z;
+            }
+            
+            clone() {
+                return new Vector3(this.x, this.y, this.z);
+            }
+            
+            add(v) {
+                this.x += v.x;
+                this.y += v.y;
+                this.z += v.z;
+                return this;
+            }
+            
+            multiplyScalar(scalar) {
+                this.x *= scalar;
+                this.y *= scalar;
+                this.z *= scalar;
+                return this;
+            }
+            
+            normalize() {
+                const length = Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+                if (length > 0) {
+                    this.x /= length;
+                    this.y /= length;
+                    this.z /= length;
+                }
+                return this;
+            }
+        }
+
+        // 3D Turtle Graphics Class
+        class Turtle3D {
+            constructor(canvas, ctx) {
+                this.canvas = canvas;
+                this.ctx = ctx;
+                this.position = new Vector3(0, 0, 0);
+                this.heading = 0;    // Yaw (left/right rotation)
+                this.pitch = 0;      // Pitch (up/down rotation)
+                this.roll = 0;       // Roll (barrel roll)
+                this.penIsDown = true;
+                this.lineColor = '#00ff00';
+                this.lines = [];
+                this.trails = [];
+                
+                // 3D projection settings
+                this.camera = {
+                    x: 0, y: 0, z: 200,
+                    rotX: 0, rotY: 0,
+                    zoom: 1
+                };
+                
+                // Animation properties
+                this.animating = false;
+                this.animationQueue = [];
+                this.animationSpeed = 800;
+                
+                this.setupMouseControls();
+                this.draw();
+            }
+            
+            setupMouseControls() {
+                let isMouseDown = false;
+                let lastMouseX = 0;
+                let lastMouseY = 0;
+                
+                this.canvas.addEventListener('mousedown', (e) => {
+                    isMouseDown = true;
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                });
+                
+                this.canvas.addEventListener('mousemove', (e) => {
+                    if (isMouseDown) {
+                        const deltaX = e.clientX - lastMouseX;
+                        const deltaY = e.clientY - lastMouseY;
+                        
+                        this.camera.rotY += deltaX * 0.01;
+                        this.camera.rotX += deltaY * 0.01;
+                        
+                        // Clamp camera rotation
+                        this.camera.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.camera.rotX));
+                        
+                        lastMouseX = e.clientX;
+                        lastMouseY = e.clientY;
+                        this.draw();
+                    }
+                });
+                
+                this.canvas.addEventListener('mouseup', () => {
+                    isMouseDown = false;
+                });
+                
+                this.canvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    this.camera.zoom *= (e.deltaY > 0) ? 0.9 : 1.1;
+                    this.camera.zoom = Math.max(0.1, Math.min(5, this.camera.zoom));
+                    this.draw();
+                });
+            }
+            
+            project3D(point) {
+                // Apply camera rotation
+                let x = point.x - this.camera.x;
+                let y = point.y - this.camera.y;
+                let z = point.z - this.camera.z;
+                
+                // Rotate around X axis (pitch)
+                const cosRX = Math.cos(this.camera.rotX);
+                const sinRX = Math.sin(this.camera.rotX);
+                const tempY = y * cosRX - z * sinRX;
+                z = y * sinRX + z * cosRX;
+                y = tempY;
+                
+                // Rotate around Y axis (yaw)
+                const cosRY = Math.cos(this.camera.rotY);
+                const sinRY = Math.sin(this.camera.rotY);
+                const tempX = x * cosRY - z * sinRY;
+                z = x * sinRY + z * cosRY;
+                x = tempX;
+                
+                // Project to 2D
+                const distance = 300;
+                const scale = distance / (distance + z) * this.camera.zoom;
+                
+                return {
+                    x: this.canvas.width / 2 + x * scale,
+                    y: this.canvas.height / 2 - y * scale,
+                    z: z
+                };
+            }
+            
+            getDirection() {
+                // Calculate forward direction based on turtle's orientation
+                const headingRad = this.heading * Math.PI / 180;
+                const pitchRad = this.pitch * Math.PI / 180;
+                
+                return new Vector3(
+                    Math.sin(headingRad) * Math.cos(pitchRad),
+                    Math.sin(pitchRad),
+                    Math.cos(headingRad) * Math.cos(pitchRad)
+                );
+            }
+            
+            forward(distance) {
+                if (this.animating) {
+                    this.animationQueue.push(['forward', distance]);
+                    return;
+                }
+                this.animateForward(distance);
+            }
+            
+            animateForward(distance) {
+                this.animating = true;
+                const startPos = this.position.clone();
+                const direction = this.getDirection();
+                const endPos = startPos.clone().add(direction.multiplyScalar(distance));
+                
+                const startTime = Date.now();
+                const animate = () => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / this.animationSpeed, 1);
+                    
+                    // Interpolate position
+                    this.position = new Vector3(
+                        startPos.x + (endPos.x - startPos.x) * progress,
+                        startPos.y + (endPos.y - startPos.y) * progress,
+                        startPos.z + (endPos.z - startPos.z) * progress
+                    );
+                    
+                    // Draw trail if pen is down
+                    if (this.penIsDown && progress > 0) {
+                        const prevPos = new Vector3(
+                            startPos.x + (endPos.x - startPos.x) * Math.max(0, progress - 0.05),
+                            startPos.y + (endPos.y - startPos.y) * Math.max(0, progress - 0.05),
+                            startPos.z + (endPos.z - startPos.z) * Math.max(0, progress - 0.05)
+                        );
+                        this.lines.push({
+                            start: prevPos,
+                            end: this.position.clone(),
+                            color: this.lineColor
+                        });
+                    }
+                    
+                    this.updateInfo();
+                    this.draw();
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        this.animating = false;
+                        this.processQueue();
+                    }
+                };
+                animate();
+            }
+            
+            turnLeft(angle) {
+                this.turn(-angle, 'heading');
+            }
+            
+            turnRight(angle) {
+                this.turn(angle, 'heading');
+            }
+            
+            pitchUp(angle) {
+                this.turn(angle, 'pitch');
+            }
+            
+            pitchDown(angle) {
+                this.turn(-angle, 'pitch');
+            }
+            
+            rollLeft(angle) {
+                this.turn(-angle, 'roll');
+            }
+            
+            rollRight(angle) {
+                this.turn(angle, 'roll');
+            }
+            
+            turn(angle, axis) {
+                if (this.animating) {
+                    this.animationQueue.push(['turn', angle, axis]);
+                    return;
+                }
+                this.animateTurn(angle, axis);
+            }
+            
+            animateTurn(angle, axis) {
+                this.animating = true;
+                const startRotation = this[axis];
+                const endRotation = startRotation + angle;
+                
+                const startTime = Date.now();
+                const animate = () => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / (this.animationSpeed * 0.6), 1);
+                    
+                    this[axis] = startRotation + (endRotation - startRotation) * progress;
+                    
+                    this.updateInfo();
+                    this.draw();
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        this.animating = false;
+                        this.processQueue();
+                    }
+                };
+                animate();
+            }
+            
+            penUp() {
+                this.penIsDown = false;
+                this.updateInfo();
+            }
+            
+            penDown() {
+                this.penIsDown = true;
+                this.updateInfo();
+            }
+            
+            processQueue() {
+                if (this.animationQueue.length > 0) {
+                    const [command, ...args] = this.animationQueue.shift();
+                    switch (command) {
+                        case 'forward':
+                            this.forward(args[0]);
+                            break;
+                        case 'turn':
+                            this.turn(args[0], args[1]);
+                            break;
+                    }
+                }
+            }
+            
+            updateInfo() {
+                document.getElementById('position').textContent = 
+                    `${this.position.x.toFixed(1)}, ${this.position.y.toFixed(1)}, ${this.position.z.toFixed(1)}`;
+                document.getElementById('rotation').textContent = 
+                    `${this.heading.toFixed(0)}°, ${this.pitch.toFixed(0)}°, ${this.roll.toFixed(0)}°`;
+                document.getElementById('penStatus').textContent = this.penIsDown ? 'Down' : 'Up';
+            }
+            
+            draw() {
+                // Clear canvas
+                this.ctx.fillStyle = '#000011';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw grid
+                this.drawGrid();
+                
+                // Draw all lines
+                this.lines.forEach(line => {
+                    const start2D = this.project3D(line.start);
+                    const end2D = this.project3D(line.end);
+                    
+                    if (start2D.z > -200 && end2D.z > -200) {
+                        this.ctx.strokeStyle = line.color;
+                        this.ctx.lineWidth = 2;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(start2D.x, start2D.y);
+                        this.ctx.lineTo(end2D.x, end2D.y);
+                        this.ctx.stroke();
+                    }
+                });
+                
+                // Draw turtle
+                this.drawTurtle();
+            }
+            
+            drawGrid() {
+                const gridSize = 50;
+                const gridExtent = 200;
+                
+                this.ctx.strokeStyle = '#333333';
+                this.ctx.lineWidth = 1;
+                
+                // XZ plane grid
+                for (let x = -gridExtent; x <= gridExtent; x += gridSize) {
+                    const start = this.project3D(new Vector3(x, 0, -gridExtent));
+                    const end = this.project3D(new Vector3(x, 0, gridExtent));
+                    
+                    if (start.z > -200 && end.z > -200) {
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(start.x, start.y);
+                        this.ctx.lineTo(end.x, end.y);
+                        this.ctx.stroke();
+                    }
+                }
+                
+                for (let z = -gridExtent; z <= gridExtent; z += gridSize) {
+                    const start = this.project3D(new Vector3(-gridExtent, 0, z));
+                    const end = this.project3D(new Vector3(gridExtent, 0, z));
+                    
+                    if (start.z > -200 && end.z > -200) {
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(start.x, start.y);
+                        this.ctx.lineTo(end.x, end.y);
+                        this.ctx.stroke();
+                    }
+                }
+                
+                // Axes
+                this.ctx.lineWidth = 2;
+                
+                // X axis (red)
+                this.ctx.strokeStyle = '#ff0000';
+                const xStart = this.project3D(new Vector3(-50, 0, 0));
+                const xEnd = this.project3D(new Vector3(50, 0, 0));
+                this.ctx.beginPath();
+                this.ctx.moveTo(xStart.x, xStart.y);
+                this.ctx.lineTo(xEnd.x, xEnd.y);
+                this.ctx.stroke();
+                
+                // Y axis (green)
+                this.ctx.strokeStyle = '#00ff00';
+                const yStart = this.project3D(new Vector3(0, -50, 0));
+                const yEnd = this.project3D(new Vector3(0, 50, 0));
+                this.ctx.beginPath();
+                this.ctx.moveTo(yStart.x, yStart.y);
+                this.ctx.lineTo(yEnd.x, yEnd.y);
+                this.ctx.stroke();
+                
+                // Z axis (blue)
+                this.ctx.strokeStyle = '#0000ff';
+                const zStart = this.project3D(new Vector3(0, 0, -50));
+                const zEnd = this.project3D(new Vector3(0, 0, 50));
+                this.ctx.beginPath();
+                this.ctx.moveTo(zStart.x, zStart.y);
+                this.ctx.lineTo(zEnd.x, zEnd.y);
+                this.ctx.stroke();
+            }
+            
+            drawTurtle() {
+                const turtlePos = this.project3D(this.position);
+                
+                if (turtlePos.z > -200) {
+                    // Draw turtle body
+                    this.ctx.fillStyle = '#ff0000';
+                    this.ctx.beginPath();
+                    this.ctx.arc(turtlePos.x, turtlePos.y, 5, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // Draw direction indicator
+                    const direction = this.getDirection();
+                    const forwardPos = this.position.clone().add(direction.multiplyScalar(20));
+                    const forward2D = this.project3D(forwardPos);
+                    
+                    this.ctx.strokeStyle = '#ffff00';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(turtlePos.x, turtlePos.y);
+                    this.ctx.lineTo(forward2D.x, forward2D.y);
+                    this.ctx.stroke();
+                }
+            }
+            
+            clear() {
+                this.lines = [];
+                this.position = new Vector3(0, 0, 0);
+                this.heading = 0;
+                this.pitch = 0;
+                this.roll = 0;
+                this.updateInfo();
+                this.draw();
+            }
+        }
+
+        // Setup
+        const canvas = document.getElementById('canvas3d');
+        const ctx = canvas.getContext('2d');
+        const turtle = new Turtle3D(canvas, ctx);
+
+        // Drawing functions
+        function drawSquare() {
+            turtle.penDown();
+            for (let i = 0; i < 4; i++) {
+                turtle.forward(40);
+                turtle.turnRight(90);
+            }
+        }
+
+        function drawCube() {
+            turtle.penDown();
+            // Bottom square
+            for (let i = 0; i < 4; i++) {
+                turtle.forward(40);
+                turtle.turnRight(90);
+            }
+            
+            // Go up and draw top square
+            turtle.pitchUp(90);
+            turtle.forward(40);
+            turtle.pitchDown(90);
+            
+            for (let i = 0; i < 4; i++) {
+                turtle.forward(40);
+                turtle.turnRight(90);
+            }
+            
+            // Connect corners
+            turtle.pitchDown(90);
+            turtle.forward(40);
+            turtle.pitchUp(90);
+            turtle.turnRight(90);
+            
+            turtle.pitchUp(90);
+            turtle.forward(40);
+            turtle.pitchDown(90);
+            turtle.turnRight(90);
+            
+            turtle.pitchUp(90);
+            turtle.forward(40);
+            turtle.pitchDown(90);
+            turtle.turnRight(90);
+            
+            turtle.pitchUp(90);
+            turtle.forward(40);
+            turtle.pitchDown(90);
+        }
+
+        function drawSpiral() {
+            turtle.penDown();
+            for (let i = 0; i < 20; i++) {
+                turtle.forward(i * 3);
+                turtle.turnRight(90);
+                turtle.pitchUp(5);
+            }
+        }
+        
+        function animatedDemo() {
+            turtle.clear();
+            turtle.penDown();
+            
+            // Create an animated 3D flower pattern
+            for (let i = 0; i < 36; i++) {
+                turtle.forward(30);
+                turtle.turnRight(170);
+                turtle.pitchUp(10);
+            }
+        }
+
+        function clearCanvas() {
+            turtle.clear();
+        }
+
+        // Initialize
+        turtle.updateInfo();
+    </script>
+</body>
+</html>
+    </script>
+</body>
+</html>
